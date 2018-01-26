@@ -7,18 +7,26 @@ class Salsa20
     @key = key
     @rounds = rounds
     @cur_state = 0;
+    @buf = []
   end
 
   def cur_state
     Array.new(4) do |i|
-      @cur_state << (16 - i*4)
+      @cur_state & 0xffffffff << (16 - i*4)
     end
   end
 
   def make_state
-
     if @key.length == 4 then
-      sigma[0...1] + @key + sigma[1...2] + cur_state + sigma[2...3] + @key + sigma[3...4]
+      teta = [
+        [101, 120, 112, 97],
+        [110, 100, 32,  49],
+        [50,  45,  98,  121],
+        [116, 101, 32,  107]
+      ].map do |i|
+        littleendian i
+      end
+      teta[0...1] + @key + teta[1...2] + cur_state + teta[2...3] + @key + teta[3...4]
     else
       sigma = [
         [101, 120, 112, 97],
@@ -38,10 +46,24 @@ class Salsa20
     @cur_state += 1
 
     for i in (0...@rounds)
-      matrix = doubleround matrix
+      matrix = round matrix
     end
-    matrix.flatten.map.with_index do |x, i|
-      x ^ state[i]
+    matrix.transpose.flatten.map.with_index do |x, i|
+      # x ^ state[i]
+      (x + state[i]) & 0xffffffff
+    end.map! do |i|
+      Array.new(4) do |j|
+        (i >> (4 - j)) & 0xff
+      end
+    end.flatten
+  end
+
+  def next_byte
+    if @buf.empty? then
+      @buf = self.next
+      next_byte
+    else
+      @buf.shift
     end
   end
 
@@ -50,57 +72,41 @@ class Salsa20
     (x << n) & mask | (x >> (32 - n)) & mask
   end
 
-  def quarterrouund y
-    z = Array.new(4)
-    z[1] = y[1] ^ (rot32 y[0] + y[3], 7)
-    z[2] = y[2] ^ (rot32 z[1] + y[0], 9)
-    z[3] = y[3] ^ (rot32 z[2] + z[1], 13)
-    z[0] = y[0] ^ (rot32 z[3] + z[2], 18)
-    return z
+  def quarterround y
+    # p y
+    y[1] ^= (rot32 y[0] + y[3], 7)
+    y[2] ^= (rot32 y[1] + y[0], 9)
+    y[3] ^= (rot32 y[2] + y[1], 13)
+    y[0] ^= (rot32 y[3] + y[2], 18)
+    return y
   end
 
-  def rowround y
-    Array.new(4) do |i|
-      quarterrouund y[i]
-    end
-  end
-
-  def colround y
-    (Array.new(4) do |i|
-      quarterrouund y.transpose[i]
-    end).transpose
-  end
-
-  def doubleround y
-    rowround colround y
+  def round y
+    y.map do |i|
+      quarterround i
+    end.transpose
   end
 
   def littleendian y
     y[0] + (1 << 8)*y[1] + (1 << 16)*y[2] + (1 << 24)*y[3]
   end
 
+  def encript_str data
+    data.each_byte.with_index do |x, i|
+      data.setbyte i, x ^ next_byte
+    end
+  end
+
 end
 
-s = Salsa20.new [5, 5, 5, 5, 5, 5, 5, 5], 10
-# s.quarterrouund [5, 5, 5, 5]
+s = Salsa20.new [5, 12, 252, 11, 22, 122, 121, 110], 20
 z = Array.new 4 do |i|
   Array.new(4) do |j|
     i*4 + j
   end
 end
-(s.doubleround z).each do |i|
-  p i
-end
-x = s.next.map! do |i|
-  i.to_s(2)
-end.join("-")
-p x
-x = s.next.map! do |i|
-  i.to_s(2)
-end.join("-")
-p x
-# z = Array.new 35 do |i|
-#   s.rot32 1, i
+# for i in (0...12)
+#   puts s.next_byte
 # end
-# p z
-# p z
+x = s.encript_str "mama rama"
+puts x
